@@ -5,6 +5,14 @@
   "version": "0.1.0",
   "publisher": "huggingface",
   "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/NielsRogge/copilot-traces-hf"
+  },
+  "bugs": {
+    "url": "https://github.com/NielsRogge/copilot-traces-hf/issues"
+  },
+  "homepage": "https://github.com/NielsRogge/copilot-traces-hf#readme",
   "engines": {
     "vscode": "^1.95.0"
   },
@@ -216,7 +224,7 @@
     "typecheck": "tsc --noEmit -p .",
     "build:test": "tsc -p tsconfig.test.json && cp test/fake-trufflehog.js out/test/",
     "test": "npm run build:test && node --test out/test/*.test.js",
-    "package": "npm run typecheck && npm run build && vsce package --no-dependencies --allow-missing-repository",
+    "package": "npm run typecheck && npm run build && vsce package --no-dependencies",
     "vscode:prepublish": "npm run build",
     "test:integration": "npm run build && npm run build:test && xvfb-run -a node test/integration/run.js"
   },
