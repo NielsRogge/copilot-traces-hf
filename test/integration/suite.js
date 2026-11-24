@@ -6,7 +6,7 @@ exports.run = async function () {
 	assert.ok(ext, 'extension not found');
 	const api = await ext.activate();
 	const cmds = await vscode.commands.getCommands(true);
-	for (const c of ['previewSession', 'exportSessions', 'uploadSessions', 'uploadWorkspaceSessions', 'uploadAllSessions', 'setToken', 'signOut', 'setTarget', 'openTarget']) {
+	for (const c of ['previewSession', 'scanSessions', 'exportSessions', 'uploadSessions', 'uploadWorkspaceSessions', 'uploadAllSessions', 'setToken', 'signOut', 'setTarget', 'openTarget']) {
 		assert.ok(cmds.includes('copilotTraces.' + c), 'missing command ' + c);
 	}
 	const traces = await api.getTraces('all');

@@ -6,9 +6,11 @@ import { convertSession, sessionTitle, toJsonl } from './converter';
 import { ensureTarget, getUsername, parseTarget, readCachedToken, Target, targetToString, targetUrl, uploadTraceFiles } from './hub';
 import { redactDeep, RedactOptions } from './redact';
 import { findUserDir, listSessionFiles, readSessionFile, SessionFileInfo } from './sessionStore';
+import { redactFindings, scanTraces, TruffleHogFinding, TruffleHogNotFoundError, truffleHogVersion } from './trufflehog';
 
 const TOKEN_KEY = 'copilotTraces.hfToken';
 const UPLOADED_KEY = 'copilotTraces.uploaded'; // sessionId -> mtimeMs uploaded
+const HELD_KEY = 'copilotTraces.heldBack'; // sessionId -> mtimeMs held back by the secret scan
 const EXTENSION_VERSION = '0.1.0';
 
 let output: vscode.LogOutputChannel;
@@ -44,6 +46,7 @@ export function activate(context: vscode.ExtensionContext): CopilotTracesApi {
 		vscode.commands.registerCommand('copilotTraces.uploadSessions', () => uploadPicked()),
 		vscode.commands.registerCommand('copilotTraces.uploadWorkspaceSessions', () => uploadScope('workspace')),
 		vscode.commands.registerCommand('copilotTraces.uploadAllSessions', () => uploadScope('all')),
+		vscode.commands.registerCommand('copilotTraces.scanSessions', scanSessionsCommand),
 		vscode.commands.registerCommand('copilotTraces.setToken', setToken),
 		vscode.commands.registerCommand('copilotTraces.signOut', signOut),
 		vscode.commands.registerCommand('copilotTraces.setTarget', () => pickTarget(true)),
@@ -250,12 +253,20 @@ async function exportSessions(): Promise<void> {
 	if (!folder?.length) {
 		return;
 	}
-	for (const s of picked) {
+	let scan: SecretScanOutcome;
+	try {
+		scan = await secretScan(picked, true);
+	} catch (e) {
+		vscode.window.showErrorMessage(errorMessage(e));
+		return;
+	}
+	for (const s of scan.kept) {
 		fs.writeFileSync(path.join(folder[0].fsPath, fileName(s)), s.jsonl, 'utf8');
 	}
-	const redactions = picked.reduce((n, s) => n + s.redactions, 0);
+	const redactions = scan.kept.reduce((n, s) => n + s.redactions, 0);
+	const held = scan.heldBack.length ? ` ${scan.heldBack.length} held back by TruffleHog (see the "Copilot Traces" output).` : '';
 	const choice = await vscode.window.showInformationMessage(
-		`Exported ${picked.length} session${picked.length === 1 ? '' : 's'} to ${folder[0].fsPath}${redactions ? ` (${redactions} redactions)` : ''}.`,
+		`Exported ${scan.kept.length} session${scan.kept.length === 1 ? '' : 's'} to ${folder[0].fsPath}${redactions ? ` (${redactions} redactions)` : ''}.${held}`,
 		'Reveal',
 	);
 	if (choice === 'Reveal') {
@@ -403,12 +414,23 @@ async function upload(sessions: LoadedSession[], interactive: boolean): Promise<
 		}
 		const visibility = cfg().get<'private' | 'public'>('visibility', 'private');
 
+		const scan = await secretScan(sessions, interactive);
+		await rememberHeldBack(scan.heldBack);
+		sessions = scan.kept;
+		if (!sessions.length) {
+			if (interactive) {
+				vscode.window.showWarningMessage('Nothing to upload: every selected session was held back by the TruffleHog scan. See the "Copilot Traces" output for details.');
+			}
+			return false;
+		}
+
 		if (interactive && cfg().get<boolean>('confirmBeforeUpload', true)) {
 			const redactions = sessions.reduce((n, s) => n + s.redactions, 0);
 			const msg = `Upload ${sessions.length} Copilot session${sessions.length === 1 ? '' : 's'} to ${targetToString(target)}?`;
 			const detail =
 				'Traces can contain prompts, code, file paths, command output and secrets. ' +
-				`Automatic redaction replaced ${redactions} value${redactions === 1 ? '' : 's'}, but it is best-effort — review traces with "Copilot Traces: Preview Session" before publishing publicly. ` +
+				`Automatic redaction replaced ${redactions} value${redactions === 1 ? '' : 's'}. ${scan.summary} ` +
+				'Redaction is best-effort: review traces with "Copilot Traces: Preview Session" before publishing publicly. ' +
 				`New repositories are created as ${visibility}.`;
 			const ok = await vscode.window.showWarningMessage(msg, { modal: true, detail }, 'Upload');
 			if (ok !== 'Upload') {
@@ -493,7 +515,9 @@ async function autoUpload(): Promise<void> {
 	}
 	const uploaded = ctx.globalState.get<Record<string, number>>(UPLOADED_KEY, {});
 	const quietMs = 5 * 60_000; // skip sessions that are still being written to
-	const changed = discover(scope).filter(s => (uploaded[s.sessionId] ?? 0) < s.mtimeMs && Date.now() - s.mtimeMs > quietMs);
+	const held = ctx.globalState.get<Record<string, number>>(HELD_KEY, {});
+	const changed = discover(scope).filter(s =>
+		(uploaded[s.sessionId] ?? 0) < s.mtimeMs && (held[s.sessionId] ?? 0) < s.mtimeMs && Date.now() - s.mtimeMs > quietMs);
 	if (!changed.length) {
 		return;
 	}
@@ -506,4 +530,121 @@ async function autoUpload(): Promise<void> {
 
 function errorMessage(e: unknown): string {
 	return e instanceof Error ? e.message : String(e);
+}
+
+// ---------------------------------------------------------------------------
+// TruffleHog secret scan
+
+interface SecretScanOutcome {
+	kept: LoadedSession[];
+	heldBack: { session: LoadedSession; findings: TruffleHogFinding[] }[];
+	/** One-line summary for confirmation dialogs. */
+	summary: string;
+}
+
+/**
+ * Runs TruffleHog over the (already redacted) traces. Secrets it finds are replaced with
+ * placeholders (or the session is held back, depending on settings). Throws if the scan is
+ * required but cannot run.
+ */
+async function secretScan(sessions: LoadedSession[], interactive: boolean): Promise<SecretScanOutcome> {
+	const c = cfg();
+	const mode = c.get<'auto' | 'required' | 'off'>('trufflehog.mode', 'auto');
+	if (mode === 'off' || sessions.length === 0) {
+		return { kept: sessions, heldBack: [], summary: 'TruffleHog scan is off.' };
+	}
+	const binary = (c.get<string>('trufflehog.path', '') || 'trufflehog').replace(/^~(?=$|[\\/])/, os.homedir());
+	const onFindings = c.get<'redact' | 'skip'>('trufflehog.onFindings', 'redact');
+	const traces = new Map(sessions.map(s => [s.info.file, s.jsonl] as [string, string]));
+	let result;
+	try {
+		result = await vscode.window.withProgress(
+			{ location: interactive ? vscode.ProgressLocation.Notification : vscode.ProgressLocation.Window, title: `Scanning ${sessions.length} trace${sessions.length === 1 ? '' : 's'} with TruffleHog…` },
+			() => scanTraces(traces, { binary, verify: c.get<boolean>('trufflehog.verify', false) }),
+		);
+	} catch (e) {
+		if (e instanceof TruffleHogNotFoundError && mode === 'auto') {
+			output.info(`TruffleHog not found; skipping secret scan. ${e.message}`);
+			return { kept: sessions, heldBack: [], summary: 'TruffleHog is not installed, so no extra secret scan ran.' };
+		}
+		throw e;
+	}
+	const kept: LoadedSession[] = [];
+	const heldBack: SecretScanOutcome['heldBack'] = [];
+	let redactedSessions = 0;
+	let redactedSecrets = 0;
+	for (const s of sessions) {
+		const findings = result.findings.get(s.info.file) ?? [];
+		if (!findings.length) {
+			kept.push(s);
+			continue;
+		}
+		const described = findings.map(f => `${f.detector} (${f.status}) ${f.masked}${f.line ? ` line ${f.line}` : ''}`).join(', ');
+		const redacted = onFindings === 'redact' ? redactFindings(s.jsonl, findings) : undefined;
+		if (redacted) {
+			kept.push({ ...s, jsonl: redacted.text, redactions: s.redactions + redacted.count });
+			redactedSessions++;
+			redactedSecrets += findings.length;
+			output.warn(`TruffleHog: redacted ${findings.length} secret(s) in "${s.title}" [${s.info.sessionId}]: ${described}`);
+		} else {
+			heldBack.push({ session: s, findings });
+			output.warn(`TruffleHog: held back "${s.title}" [${s.info.sessionId}]: ${described}`);
+		}
+		if (findings.some(f => f.status === 'verified')) {
+			output.error(`TruffleHog found a VERIFIED live secret in "${s.title}". Rotate it, even though it will not be uploaded.`);
+		}
+	}
+	const parts: string[] = [];
+	if (redactedSessions) {
+		parts.push(`TruffleHog found and redacted ${redactedSecrets} more secret${redactedSecrets === 1 ? '' : 's'} in ${redactedSessions} session${redactedSessions === 1 ? '' : 's'}.`);
+	}
+	if (heldBack.length) {
+		parts.push(`${heldBack.length} session${heldBack.length === 1 ? ' was' : 's were'} held back because of TruffleHog findings.`);
+	}
+	if (!parts.length) {
+		parts.push('TruffleHog found no secrets.');
+	}
+	if (interactive && heldBack.length) {
+		output.show(true);
+	}
+	return { kept, heldBack, summary: parts.join(' ') };
+}
+
+async function rememberHeldBack(heldBack: SecretScanOutcome['heldBack']): Promise<void> {
+	if (!heldBack.length) {
+		return;
+	}
+	const held = { ...ctx.globalState.get<Record<string, number>>(HELD_KEY, {}) };
+	for (const h of heldBack) {
+		held[h.session.info.sessionId] = h.session.info.mtimeMs;
+	}
+	await ctx.globalState.update(HELD_KEY, held);
+}
+
+async function scanSessionsCommand(): Promise<void> {
+	const c = cfg();
+	const binary = (c.get<string>('trufflehog.path', '') || 'trufflehog').replace(/^~(?=$|[\\/])/, os.homedir());
+	const version = await truffleHogVersion(binary);
+	if (!version) {
+		const choice = await vscode.window.showErrorMessage(new TruffleHogNotFoundError(binary).message, 'Open TruffleHog on GitHub');
+		if (choice) {
+			vscode.env.openExternal(vscode.Uri.parse('https://github.com/trufflesecurity/trufflehog#floppy_disk-installation'));
+		}
+		return;
+	}
+	const picked = await pickSessions(true, 'Scan Copilot sessions with TruffleHog');
+	if (!picked?.length) {
+		return;
+	}
+	try {
+		const outcome = await secretScan(picked, true);
+		output.info(`TruffleHog scan (${version}) of ${picked.length} session(s): ${outcome.summary}`);
+		const findings = picked.length - outcome.kept.filter(k => picked.find(p => p.info.file === k.info.file)?.jsonl === k.jsonl).length;
+		if (findings) {
+			output.show(true);
+		}
+		vscode.window.showInformationMessage(`Scanned ${picked.length} session${picked.length === 1 ? '' : 's'} with TruffleHog. ${outcome.summary}`);
+	} catch (e) {
+		vscode.window.showErrorMessage(`TruffleHog scan failed: ${errorMessage(e)}`);
+	}
 }

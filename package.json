@@ -52,6 +52,11 @@
         "category": "Copilot Traces"
       },
       {
+        "command": "copilotTraces.scanSessions",
+        "title": "Scan Sessions for Secrets with TruffleHog…",
+        "category": "Copilot Traces"
+      },
+      {
         "command": "copilotTraces.setTarget",
         "title": "Set Upload Target (Dataset or Bucket)…",
         "category": "Copilot Traces"
@@ -127,6 +132,44 @@
           "default": [],
           "description": "Extra regular expressions whose matches are replaced with [REDACTED]."
         },
+        "copilotTraces.trufflehog.mode": {
+          "type": "string",
+          "enum": [
+            "auto",
+            "required",
+            "off"
+          ],
+          "default": "auto",
+          "enumDescriptions": [
+            "Scan with TruffleHog when it is installed, otherwise skip the scan",
+            "Refuse to upload or export unless TruffleHog is installed and the scan succeeds",
+            "Never run TruffleHog"
+          ],
+          "markdownDescription": "Scan traces with [TruffleHog](https://github.com/trufflesecurity/trufflehog) (800+ secret detectors) before they are uploaded or exported."
+        },
+        "copilotTraces.trufflehog.onFindings": {
+          "type": "string",
+          "enum": [
+            "redact",
+            "skip"
+          ],
+          "default": "redact",
+          "enumDescriptions": [
+            "Replace each secret TruffleHog finds with a placeholder (sessions where that is not possible are held back)",
+            "Hold back every session with a finding"
+          ],
+          "description": "What to do with sessions in which TruffleHog finds a secret."
+        },
+        "copilotTraces.trufflehog.verify": {
+          "type": "boolean",
+          "default": false,
+          "markdownDescription": "Let TruffleHog check whether found secrets are live by calling the issuing service (e.g. the GitHub or AWS API). This sends the candidate secrets to those services. Off by default (`--no-verification`)."
+        },
+        "copilotTraces.trufflehog.path": {
+          "type": "string",
+          "default": "",
+          "markdownDescription": "Path to the `trufflehog` binary. Leave empty to use `trufflehog` from your PATH."
+        },
         "copilotTraces.confirmBeforeUpload": {
           "type": "boolean",
           "default": true,
@@ -171,7 +214,7 @@
   "scripts": {
     "build": "esbuild src/extension.ts --bundle --platform=node --target=node20 --format=cjs --external:vscode --outfile=dist/extension.js --minify --sourcemap",
     "typecheck": "tsc --noEmit -p .",
-    "build:test": "tsc -p tsconfig.test.json",
+    "build:test": "tsc -p tsconfig.test.json && cp test/fake-trufflehog.js out/test/",
     "test": "npm run build:test && node --test out/test/*.test.js",
     "package": "npm run typecheck && npm run build && vsce package --no-dependencies --allow-missing-repository",
     "vscode:prepublish": "npm run build",

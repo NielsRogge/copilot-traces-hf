@@ -22,6 +22,10 @@ one `session` header line followed by `user`, `assistant` (with reasoning and to
 - Best-effort **redaction** before anything leaves your machine: common API keys and tokens,
   private keys and `password=`-style assignments, your home directory (→ `~`) and OS username,
   plus any custom regexes you add.
+- **[TruffleHog](https://github.com/trufflesecurity/trufflehog) secret scan** (as used by
+  [pi-share-hf](https://github.com/badlogic/pi-share-hf)): if `trufflehog` is installed, every trace
+  is scanned with its 800+ detectors before upload or export. Secrets it finds are replaced with
+  `[REDACTED_TRUFFLEHOG_<DETECTOR>]`; sessions where that isn't possible are held back.
 - **Preview** a converted trace in an editor before uploading, or **export** traces to a folder.
 - Optional **auto upload** of new or changed sessions on an interval.
 
@@ -34,6 +38,7 @@ All commands are under **Copilot Traces:** in the Command Palette.
 | Preview Session as Trace | Converts one session and opens the JSONL so you can review it |
 | Export Sessions to Folder… | Writes selected sessions as `.jsonl` trace files |
 | Upload Sessions to Hugging Face… | Pick sessions and upload them |
+| Scan Sessions for Secrets with TruffleHog… | Run TruffleHog on selected sessions and report findings |
 | Upload All Sessions of This Workspace | Uploads every session of the open workspace |
 | Upload All Sessions (All Workspaces) | Uploads every session found |
 | Set Upload Target (Dataset or Bucket)… | Change where traces go |
@@ -56,6 +61,10 @@ The token needs **write** access.
 | `copilotTraces.redact.secrets` | `true` | Redact common secrets |
 | `copilotTraces.redact.homeDirectory` | `true` | Replace home dir with `~` and username with `<user>` |
 | `copilotTraces.redact.customPatterns` | `[]` | Extra regexes to redact |
+| `copilotTraces.trufflehog.mode` | `auto` | `auto`: scan when TruffleHog is installed · `required`: refuse to share without a scan · `off` |
+| `copilotTraces.trufflehog.onFindings` | `redact` | `redact` found secrets, or `skip` (hold back) the whole session |
+| `copilotTraces.trufflehog.verify` | `false` | Let TruffleHog check whether secrets are live (sends them to the issuing service) |
+| `copilotTraces.trufflehog.path` | – | Path to `trufflehog` if it isn't on your PATH |
 | `copilotTraces.confirmBeforeUpload` | `true` | Confirmation dialog for manual uploads |
 | `copilotTraces.autoUpload.enabled` | `false` | Upload new/changed sessions periodically (after a target was set once) |
 | `copilotTraces.autoUpload.intervalMinutes` | `30` | |
@@ -77,6 +86,16 @@ The token needs **write** access.
 
 Traces can include prompts, code, file paths, terminal output and secrets. Redaction is
 best-effort: preview traces before making a dataset public, and keep it private when unsure.
+
+For a much stronger secret check, install TruffleHog; the extension picks it up automatically:
+
+```bash
+brew install trufflehog
+```
+
+(or grab a binary from the [releases page](https://github.com/trufflesecurity/trufflehog/releases)).
+Set `copilotTraces.trufflehog.mode` to `required` to make sure nothing is shared unscanned.
+If TruffleHog reports a *verified* (live) secret, rotate it, even though it won't be uploaded.
 
 ## Development
 
