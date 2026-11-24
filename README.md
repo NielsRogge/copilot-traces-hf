@@ -1,5 +1,9 @@
 # Copilot Traces for Hugging Face
 
+<p align="center">
+  <a href="media/demo.mp4"><img src="media/demo.webp" alt="Uploading GitHub Copilot sessions from VS Code to a Hugging Face dataset and opening them in the trace viewer" width="100%"></a>
+</p>
+
 Save your **GitHub Copilot Chat** sessions from VS Code as agent traces and upload them to a
 Hugging Face **dataset** or **storage bucket**, where they open in the Hub's
 [agent trace viewer](https://huggingface.co/docs/hub/en/agent-traces).
@@ -107,3 +111,13 @@ npm run package   # typecheck, bundle and build the .vsix
 
 Install the `.vsix` with **Extensions: Install from VSIX…** or
 `code --install-extension copilot-traces-hf-0.1.0.vsix`.
+
+## Acknowledgements
+
+- [pi-share-hf](https://github.com/badlogic/pi-share-hf) by [Mario Zechner](https://github.com/badlogic),
+  which collects, redacts and uploads Pi agent sessions to Hugging Face. The TruffleHog scan here
+  follows its approach (`trufflehog filesystem --json` over the already-redacted traces, then acting
+  on the findings).
+- [TruffleHog](https://github.com/trufflesecurity/trufflehog) by Truffle Security for secret detection.
+- The Hugging Face [agent traces](https://huggingface.co/docs/hub/en/agent-traces) docs and the
+  [Session Traces Format](https://huggingface.co/docs/hub/en/session-traces-format).
