@@ -1,0 +1,4 @@
+{
+  "extends": "./tsconfig.json",
+  "include": ["src/converter.ts", "src/sessionStore.ts", "src/redact.ts", "src/hub.ts", "test"]
+}

@@ -1,0 +1,191 @@
+{
+  "name": "copilot-traces-hf",
+  "displayName": "Copilot Traces for Hugging Face",
+  "description": "Save your GitHub Copilot chat sessions as agent traces and upload them to Hugging Face datasets or buckets, ready for the Hub trace viewer.",
+  "version": "0.1.0",
+  "publisher": "huggingface",
+  "license": "Apache-2.0",
+  "engines": {
+    "vscode": "^1.95.0"
+  },
+  "categories": [
+    "AI",
+    "Chat",
+    "Other"
+  ],
+  "keywords": [
+    "copilot",
+    "traces",
+    "hugging face",
+    "agent",
+    "dataset"
+  ],
+  "main": "./dist/extension.js",
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "contributes": {
+    "commands": [
+      {
+        "command": "copilotTraces.previewSession",
+        "title": "Preview Session as Trace",
+        "category": "Copilot Traces"
+      },
+      {
+        "command": "copilotTraces.exportSessions",
+        "title": "Export Sessions to Folder…",
+        "category": "Copilot Traces"
+      },
+      {
+        "command": "copilotTraces.uploadSessions",
+        "title": "Upload Sessions to Hugging Face…",
+        "category": "Copilot Traces"
+      },
+      {
+        "command": "copilotTraces.uploadWorkspaceSessions",
+        "title": "Upload All Sessions of This Workspace",
+        "category": "Copilot Traces"
+      },
+      {
+        "command": "copilotTraces.uploadAllSessions",
+        "title": "Upload All Sessions (All Workspaces)",
+        "category": "Copilot Traces"
+      },
+      {
+        "command": "copilotTraces.setTarget",
+        "title": "Set Upload Target (Dataset or Bucket)…",
+        "category": "Copilot Traces"
+      },
+      {
+        "command": "copilotTraces.openTarget",
+        "title": "Open Upload Target in Browser",
+        "category": "Copilot Traces"
+      },
+      {
+        "command": "copilotTraces.setToken",
+        "title": "Set Hugging Face Token…",
+        "category": "Copilot Traces"
+      },
+      {
+        "command": "copilotTraces.signOut",
+        "title": "Remove Hugging Face Token",
+        "category": "Copilot Traces"
+      }
+    ],
+    "configuration": {
+      "title": "Copilot Traces",
+      "properties": {
+        "copilotTraces.target": {
+          "type": "string",
+          "default": "",
+          "markdownDescription": "Where traces are uploaded: `datasets/<user>/<name>` or `buckets/<user>/<name>`. Created if missing."
+        },
+        "copilotTraces.visibility": {
+          "type": "string",
+          "enum": [
+            "private",
+            "public"
+          ],
+          "default": "private",
+          "description": "Visibility used when the dataset/bucket has to be created."
+        },
+        "copilotTraces.pathInRepo": {
+          "type": "string",
+          "default": "copilot",
+          "description": "Folder inside the dataset/bucket where trace files are written."
+        },
+        "copilotTraces.harness": {
+          "type": "string",
+          "default": "vscode-copilot",
+          "markdownDescription": "`harness` id written in each trace header (see the Session Traces Format docs)."
+        },
+        "copilotTraces.includeWorkspaceName": {
+          "type": "boolean",
+          "default": true,
+          "description": "Include the workspace folder name in the trace header."
+        },
+        "copilotTraces.maxToolResultChars": {
+          "type": "number",
+          "default": 50000,
+          "description": "Truncate individual tool results longer than this (0 = never)."
+        },
+        "copilotTraces.redact.secrets": {
+          "type": "boolean",
+          "default": true,
+          "description": "Replace common secrets (API keys, tokens, private keys, passwords) with placeholders."
+        },
+        "copilotTraces.redact.homeDirectory": {
+          "type": "boolean",
+          "default": true,
+          "description": "Replace your home directory with ~ and your OS username with <user>."
+        },
+        "copilotTraces.redact.customPatterns": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "description": "Extra regular expressions whose matches are replaced with [REDACTED]."
+        },
+        "copilotTraces.confirmBeforeUpload": {
+          "type": "boolean",
+          "default": true,
+          "description": "Ask for confirmation before manual uploads."
+        },
+        "copilotTraces.autoUpload.enabled": {
+          "type": "boolean",
+          "default": false,
+          "description": "Periodically upload new or changed sessions to the configured target."
+        },
+        "copilotTraces.autoUpload.intervalMinutes": {
+          "type": "number",
+          "default": 30,
+          "minimum": 5,
+          "description": "How often auto upload runs."
+        },
+        "copilotTraces.autoUpload.scope": {
+          "type": "string",
+          "enum": [
+            "workspace",
+            "all"
+          ],
+          "default": "workspace",
+          "description": "Auto-upload sessions of the current workspace only, or of all workspaces."
+        },
+        "copilotTraces.additionalUserDataDirs": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "markdownDescription": "Extra VS Code `User` data directories to scan (e.g. `~/.config/Code - Insiders/User`)."
+        },
+        "copilotTraces.hubUrl": {
+          "type": "string",
+          "default": "",
+          "description": "Custom Hub endpoint (leave empty for https://huggingface.co)."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "build": "esbuild src/extension.ts --bundle --platform=node --target=node20 --format=cjs --external:vscode --outfile=dist/extension.js --minify --sourcemap",
+    "typecheck": "tsc --noEmit -p .",
+    "build:test": "tsc -p tsconfig.test.json",
+    "test": "npm run build:test && node --test out/test/*.test.js",
+    "package": "npm run typecheck && npm run build && vsce package --no-dependencies --allow-missing-repository",
+    "vscode:prepublish": "npm run build",
+    "test:integration": "npm run build && npm run build:test && xvfb-run -a node test/integration/run.js"
+  },
+  "dependencies": {
+    "@huggingface/hub": "^2.17.11"
+  },
+  "devDependencies": {
+    "@types/node": "^20.19.43",
+    "@types/vscode": "^1.95.0",
+    "@vscode/test-electron": "^3.1.0",
+    "@vscode/vsce": "^4.1.1",
+    "esbuild": "^0.28.2",
+    "typescript": "5.9"
+  }
+}
